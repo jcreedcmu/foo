@@ -4,18 +4,29 @@
 #include <fcntl.h>
 #include <jack/jack.h>
 #include <string.h>
+#include <math.h>
+
+#define PI 3.14159265
 #define MAX_JACK_PORTS 32
 #define MYBUF_SIZE 2048
 #define MAX_INT 0x7fffffff
+jack_client_t *jack_client = NULL;
 jack_port_t *output_port[MAX_JACK_PORTS];
 jack_default_audio_sample_t mybuf[MYBUF_SIZE];
 #define randf() (rand() / (float)MAX_INT)
 
+int sample_rate = 48000;
+float f = 440.0;
+float tt = 0.0;
+
 static int
 process (jack_nframes_t nframes, void *arg) {
   int i;
-  for (i = 0; i < nframes; i++)
-    mybuf[i] = (2 * randf() - 1) * 0.01;
+  for (i = 0; i < nframes; i++) {
+    tt += f / sample_rate;
+    if (tt > 1.0) tt -= 1.0;
+    mybuf[i] = sin(2 * PI * tt) * 0.1;
+  }
   for (i = 0; i < 2; i++) {
     jack_default_audio_sample_t *out = jack_port_get_buffer(output_port[i], nframes);
     memcpy(out, mybuf, nframes * sizeof(jack_default_audio_sample_t));
@@ -26,7 +37,6 @@ int main(void) {
   int i;
 
   /* Jack stuff */
-  jack_client_t *jack_client = NULL;
   jack_status_t status;
   char *client_name = "foo";
 
@@ -44,7 +54,7 @@ int main(void) {
       printf("JACK: server returned status %d\n", status);
     }
   }
-  int srate = jack_get_sample_rate (jack_client);
+  sample_rate = jack_get_sample_rate (jack_client);
  
   jack_set_process_callback(jack_client,  process, 0);
   output_port[0] = jack_port_register (jack_client, "out0", JACK_DEFAULT_AUDIO_TYPE, JackPortIsOutput, 0);
@@ -71,7 +81,7 @@ int main(void) {
   jack_connect(jack_client, "foo:out0", "system:playback_1");
   jack_connect(jack_client, "foo:out1", "system:playback_2");
 
-  printf("status  %d\n", srate);
+  //  printf("status  %d\n", srate);
 
   /* Midi stuff */
   int fd = open("/dev/midi1", O_RDONLY | O_NDELAY);
@@ -96,12 +106,15 @@ int main(void) {
       select(fd+1, &readset, &writeset, &exceptset, &timout);
 
       if (FD_ISSET(fd, &readset)) {
-	unsigned char c;
-	int ret = read(fd, &c, 1);
+	unsigned char c[3];
+	int ret = read(fd, &c, 3);
 	if (ret <= 0)
 	  fprintf(stderr, "Midi read error\n");
-	else printf("%d\n", c);
-	printf("connected? %d\n", jack_port_connected_to(output_port[0], "system:playback_1"));
+	else printf("%d %d\n", c[1], c[2]);
+	if (c[2]) {
+	  f = 440.0 * pow(2.0, (c[1] - 69) / 12.0);
+	}
+	//	printf("connected? %d\n", jack_port_connected_to(output_port[0], "system:playback_1"));
 	did = 1;
       }
     }
